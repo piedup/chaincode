@@ -1,0 +1,65 @@
+{
+  "link": {
+    "state": {
+      "items": {
+        "laundry": {
+          "complete": true,
+          "description": "Do laundry"
+        }
+      },
+      "title": "my todo list"
+    },
+    "meta": {
+      "process": "main",
+      "action": "completeItem",
+      "arguments": [
+        "laundry"
+      ],
+      "mapId": "c9c56e22-29d0-45fe-bda7-b1b63b462353",
+      "stateHash": "188b111c28b3506e2064e811454862ec8be3563fa0937d0543f828b3a82b3679"
+    }
+  },
+  "meta": {
+    "agentUrl": "http://localhost:3000",
+    "evidence": {
+      "originalHeader": {
+        "chain_id": "test-chain-lIbGXY",
+        "height": 1236,
+        "time": 1504002483,
+        "last_block_id": {
+          "hash": "Yurv2C3fjVVjdLGyMPwXah5zq6c=",
+          "parts": {
+            "total": 1,
+            "hash": "5Ba8ATMud8DK6gV1Df15/6gIqw8="
+          }
+        },
+        "last_commit_hash": "8wIyaHQNB0g0dHkR+7JfPYSF5jg=",
+        "app_hash": "xCLot9VKuyZeEizGJyno0YTw1KE="
+      },
+      "originalProof": {
+        "LeafHash": "EylSkAilvOC/nyaw5ZDL49oYD+s=",
+        "InnerNodes": [
+          {
+            "Height": 1,
+            "Size": 2,
+            "Left": "PFIvtIMvIsrRThT/IEIrv9qWS+k=",
+            "Right": ""
+          },
+          {
+            "Height": 2,
+            "Size": 3,
+            "Left": "",
+            "Right": "JpRNRcxKv5iKO3IcfXfCbRmE03c="
+          }
+        ],
+        "RootHash": "xCLot9VKuyZeEizGJyno0YTw1KE="
+      },
+      "state": "COMPLETE",
+      "transactions": {
+        "[TMPop]:[test-chain-lIbGXY]": "1235"
+      }
+    },
+    "linkHash": "2b337a0c8eb21633527318c89b28405e2d20bc61872ba734af039e7b7c9648a0",
+    "segmentUrl": "http://localhost:3000/segments/2b337a0c8eb21633527318c89b28405e2d20bc61872ba734af039e7b7c9648a0"
+  }
+}

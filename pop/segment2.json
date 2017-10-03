@@ -1,0 +1,69 @@
+{
+  "link": {
+    "state": {
+      "description": "shopping"
+    },
+    "meta": {
+      "process": "main",
+      "action": "addItem",
+      "arguments": [
+        "shopping"
+      ],
+      "mapId": "49de4ace-0131-452b-8f3a-e5df90efb162",
+      "prevLinkHash": "085fa4322980286778f896fe11c4f55c46609574d9188a3c96427c76b8500bcd",
+      "stateHash": "903200a55aefa98561c96bbafd7fcceafc3b9c0a480b789e207809a6edd7957f",
+      "tags": [
+        "item"
+      ]
+    }
+  },
+  "meta": {
+    "agentUrl": "http://localhost:3000",
+    "evidence": {
+      "originalHeader": {
+        "chain_id": "test-chain-lIbGXY",
+        "height": 1903,
+        "time": 1504019206,
+        "last_block_id": {
+          "hash": "8C9XKmaHoMeFoEj1eRKqdRylY08=",
+          "parts": {
+            "total": 1,
+            "hash": "jk/gHCcv6m51qiFiWWcVvWfSFl8="
+          }
+        },
+        "last_commit_hash": "kHpYvtggvpjlijoZLCzBEY6Ux2k=",
+        "app_hash": "A4+WIQcAmkT0g40de4GPAjohoAI="
+      },
+      "originalProof": {
+        "LeafHash": "6LlgitQqMDGznBKcy83mUnnH3Ds=",
+        "InnerNodes": [
+          {
+            "Height": 1,
+            "Size": 2,
+            "Left": "ulxQnVu3czwi48uzP/sF9zJtDFI=",
+            "Right": ""
+          },
+          {
+            "Height": 2,
+            "Size": 4,
+            "Left": "gx8qzF0bJJE2YDQH4n3hoPGoBYw=",
+            "Right": ""
+          },
+          {
+            "Height": 3,
+            "Size": 6,
+            "Left": "KjlhKab2tomPsmpBueRqQCnRR1A=",
+            "Right": ""
+          }
+        ],
+        "RootHash": "A4+WIQcAmkT0g40de4GPAjohoAI="
+      },
+      "state": "COMPLETE",
+      "transactions": {
+        "[TMPop]:[test-chain-lIbGXY]": "1902"
+      }
+    },
+    "linkHash": "9e1b4b50fdeef42e9ce6d0f77594e68b3afa4e0577e620c52dfd79d5a535b96d",
+    "segmentUrl": "http://localhost:3000/segments/9e1b4b50fdeef42e9ce6d0f77594e68b3afa4e0577e620c52dfd79d5a535b96d"
+  }
+}
