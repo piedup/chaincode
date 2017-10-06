@@ -6,29 +6,11 @@ import (
 	"io/ioutil"
 	"testing"
 
-	"github.com/stratumn/sdk/cs"
-
 	"github.com/hyperledger/fabric/core/chaincode/shim"
+	"github.com/stratumn/sdk/cs"
 )
 
-func checkInit(t *testing.T, stub *shim.MockStub) {
-	res := stub.MockInit("1", [][]byte{[]byte("init")})
-	if res.Status != shim.OK {
-		fmt.Println("Init failed", string(res.Message))
-		t.FailNow()
-	}
-}
-
-func checkInvoke(t *testing.T, stub *shim.MockStub, args [][]byte) {
-	res := stub.MockInvoke("1", args)
-	if res.Status != shim.OK {
-		fmt.Println("Invoke", string(args[0]), "failed", string(res.Message))
-		t.FailNow()
-	}
-}
-
 func checkQuery(t *testing.T, stub *shim.MockStub, args [][]byte) []byte {
-	// args[0] should be function name
 	res := stub.MockInvoke("1", args)
 	if res.Status != shim.OK {
 		fmt.Println("Query failed", string(res.Message))
@@ -42,13 +24,21 @@ func checkQuery(t *testing.T, stub *shim.MockStub, args [][]byte) []byte {
 	return res.Payload
 }
 
+func checkInvoke(t *testing.T, stub *shim.MockStub, args [][]byte) {
+	res := stub.MockInvoke("1", args)
+	if res.Status != shim.OK {
+		fmt.Println("Invoke", string(args[0]), "failed", string(res.Message))
+		t.FailNow()
+	}
+}
+
 func saveSegment(t *testing.T, stub *shim.MockStub, filepath string) *cs.Segment {
 	segmentBytes, err := ioutil.ReadFile(filepath)
 	if err != nil {
 		fmt.Println("Could not load file", filepath)
 	}
 
-	checkInvoke(t, stub, [][]byte{[]byte("putSegment"), segmentBytes})
+	checkInvoke(t, stub, [][]byte{[]byte("SaveSegment"), segmentBytes})
 
 	segment := &cs.Segment{}
 	err = json.Unmarshal(segmentBytes, segment)
@@ -59,111 +49,81 @@ func saveSegment(t *testing.T, stub *shim.MockStub, filepath string) *cs.Segment
 	return segment
 }
 
-// Initialize chaincode
-func TestPop_Init(t *testing.T) {
-	cc := new(SmartContract)
-	stub := shim.NewMockStub("pop", cc)
+func TestPop_newSegmentQuery(t *testing.T) {
+	segmentFilter := "process=process&offset=10&limit=15&mapIds[]=id1&mapIds[]=id2&prevLinkHash=085fa4322980286778f896fe11c4f55c46609574d9188a3c96427c76b8500bcd&tags[]=tag1&tags[]=tag2"
+	queryString, err := newSegmentQuery(segmentFilter)
+	if err != nil {
+		fmt.Println(err.Error())
+	}
 
-	checkInit(t, stub)
+	segmentSelector := SegmentSelector{
+		ObjectType:   "segment",
+		Process:      "process",
+		PrevLinkHash: "085fa4322980286778f896fe11c4f55c46609574d9188a3c96427c76b8500bcd",
+		MapIds:       &MapIdsIn{[]string{"id1", "id2"}},
+		Tags:         &TagsAll{[]string{"tag1", "tag2"}},
+	}
+	segmentQuery := SegmentQuery{
+		Selector: segmentSelector,
+		Limit:    15,
+		Skip:     10,
+	}
+
+	r, err := json.Marshal(segmentQuery)
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+
+	if queryString != string(r) {
+		fmt.Println("Segment query json incorrect")
+		t.FailNow()
+	}
 }
 
-// Saving segment
-func TestPop_PutSegment(t *testing.T) {
+func TestPop_newMapQuery(t *testing.T) {
+	mapFilter := "process=process&offset=10"
+	queryString, _ := newMapQuery(mapFilter)
+	mapSelector := MapSelector{
+		ObjectType: "map",
+		Process:    "process",
+	}
+	mapQuery := MapQuery{
+		Selector: mapSelector,
+		Skip:     10,
+	}
+	r, _ := json.Marshal(mapQuery)
+	if queryString != string(r) {
+		fmt.Println("Map query json incorrect")
+		t.FailNow()
+	}
+}
+
+func TestPop_SaveSegment(t *testing.T) {
 	cc := new(SmartContract)
 	stub := shim.NewMockStub("pop", cc)
-
-	checkInit(t, stub)
 
 	segment := saveSegment(t, stub, "./segment1.json")
 	segmentBytes, _ := json.Marshal(segment)
+	payload := checkQuery(t, stub, [][]byte{[]byte("GetSegment"), []byte(segment.GetLinkHashString())})
 
-	// getMapsAll
-	payload := checkQuery(t, stub, [][]byte{[]byte("getMapsAll")})
-	if string(payload) != "[\""+segment.Link.GetMapID()+"\"]" {
-		fmt.Println("getMapsAll failed")
-		t.FailNow()
-	}
-
-	// getMapsForProcess
-	payload = checkQuery(t, stub, [][]byte{[]byte("getMapsForProcess"), []byte(segment.Link.GetProcess())})
-	if string(payload) != "[\""+segment.Link.GetMapID()+"\"]" {
-		fmt.Println("getMapsForProcess failed")
-		t.FailNow()
-	}
-
-	// getSegmentsAll
-	payload = checkQuery(t, stub, [][]byte{[]byte("getSegmentsAll")})
-	if string(payload) != "["+string(segmentBytes)+"]" {
-		fmt.Println("getSegmentsAll failed")
-		t.FailNow()
-	}
-
-	// getSegmentsForProcess
-	payload = checkQuery(t, stub, [][]byte{[]byte("getSegmentsForProcess"), []byte(segment.Link.GetProcess())})
-	if string(payload) != "["+string(segmentBytes)+"]" {
-		fmt.Println("getSegmentsForProcess failed")
-		t.FailNow()
-	}
-
-	// getSegmentsForMap
-	payload = checkQuery(t, stub, [][]byte{[]byte("getSegmentsForMap"), []byte(segment.Link.GetMapID())})
-	if string(payload) != "["+string(segmentBytes)+"]" {
-		fmt.Println("getSegmentsForMap failed")
-		t.FailNow()
-	}
-
-	// getSegment
-	payload = checkQuery(t, stub, [][]byte{[]byte("getSegment"), []byte(segment.GetLinkHashString())})
-	if string(payload) != string(segmentBytes) {
-		fmt.Println("getSegment failed")
+	if string(segmentBytes) != string(payload) {
+		fmt.Println("Segment not saved into database")
 		t.FailNow()
 	}
 }
 
-// Saving two segments
-func TestPop_PutTwoSegments(t *testing.T) {
+func TestPop_SaveSegmentMissingParent(t *testing.T) {
 	cc := new(SmartContract)
 	stub := shim.NewMockStub("pop", cc)
-
-	checkInit(t, stub)
-
-	segment1 := saveSegment(t, stub, "./segment1.json")
-	segment2 := saveSegment(t, stub, "./segment2.json")
-	segment3 := saveSegment(t, stub, "./segment3.json")
-
-	segment1Bytes, _ := json.Marshal(segment1)
-	segment2Bytes, _ := json.Marshal(segment2)
-
-	// getSegmentsForMap
-	payload := checkQuery(t, stub, [][]byte{[]byte("getSegmentsForMap"), []byte(segment1.Link.GetMapID())})
-	if string(payload) != "["+string(segment1Bytes)+","+string(segment2Bytes)+"]" {
-		fmt.Println("getSegmentsForMap failed")
-		t.FailNow()
-	}
-
-	// getMapsAll
-	payload = checkQuery(t, stub, [][]byte{[]byte("getMapsAll")})
-	if string(payload) != "[\""+string(segment1.Link.GetMapID())+"\",\""+string(segment3.Link.GetMapID())+"\"]" {
-		fmt.Println("getAllMaps failed")
-		t.FailNow()
-	}
-}
-
-// Saving segment when parent segment not saved (should fail)
-func TestPop_MissingParent(t *testing.T) {
-	cc := new(SmartContract)
-	stub := shim.NewMockStub("pop", cc)
-
-	checkInit(t, stub)
 
 	segmentBytes, err := ioutil.ReadFile("./segment2.json")
 	if err != nil {
 		fmt.Println("Could not load file ./segment2.json")
 	}
 
-	res := stub.MockInvoke("1", [][]byte{[]byte("putSegment"), segmentBytes})
+	res := stub.MockInvoke("1", [][]byte{[]byte("SaveSegment"), segmentBytes})
 	if res.Status != shim.ERROR {
-		fmt.Println("putSegment should have failed")
+		fmt.Println("SaveSegment should have failed")
 		t.FailNow()
 	} else {
 		if res.Message != "Parent segment doesn't exist" {
@@ -173,15 +133,13 @@ func TestPop_MissingParent(t *testing.T) {
 	}
 }
 
-// Saving wrongly formatted segment (should fail)
-func TestPop_IncorrectSegment(t *testing.T) {
+func TestPop_SaveSegmentIncorrect(t *testing.T) {
 	cc := new(SmartContract)
 	stub := shim.NewMockStub("pop", cc)
 
-	checkInit(t, stub)
-	res := stub.MockInvoke("1", [][]byte{[]byte("putSegment"), []byte("")})
+	res := stub.MockInvoke("1", [][]byte{[]byte("SaveSegment"), []byte("")})
 	if res.Status != shim.ERROR {
-		fmt.Println("putSegment should have failed")
+		fmt.Println("SaveSegment should have failed")
 		t.FailNow()
 	} else {
 		if res.Message != "Could not parse segment" {
@@ -191,15 +149,13 @@ func TestPop_IncorrectSegment(t *testing.T) {
 	}
 }
 
-// Getting non existent segment (should fail)
-func TestPop_GetNonExistingSegment(t *testing.T) {
+func TestPop_GetSegmentDoesNotExist(t *testing.T) {
 	cc := new(SmartContract)
 	stub := shim.NewMockStub("pop", cc)
 
-	checkInit(t, stub)
-	res := stub.MockInvoke("1", [][]byte{[]byte("getSegment"), []byte("")})
+	res := stub.MockInvoke("1", [][]byte{[]byte("GetSegment"), []byte("")})
 	if res.Status != shim.ERROR {
-		fmt.Println("getSegment should have failed")
+		fmt.Println("GetSegment should have failed")
 		t.FailNow()
 	} else {
 		if res.Message != "Segment does not exist" {

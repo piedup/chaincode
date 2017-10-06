@@ -4,37 +4,151 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strconv"
+
+	"github.com/stratumn/sdk/store"
 
 	"github.com/hyperledger/fabric/core/chaincode/shim"
-	"github.com/hyperledger/fabric/protos/ledger/queryresult"
 	sc "github.com/hyperledger/fabric/protos/peer"
 
 	"github.com/stratumn/sdk/cs"
+	"github.com/stratumn/sdk/types"
 )
 
-// Chaincode used to save segments to world state (putSegment) and query world state.
-// Several queries have been implemented
-// - getAllMaps returns all mapIDs
-// - getMapsForProcess returns all mapIDs for a given process
-// - getAllSegements returns all segments
-// - getSegmentsForProcess returns all segments for a given process
-// - getSegmentsForMap returns all segments for a given mapID
-// - getSegment returns segments for a given linkHash
+// Pagination functionality (limit & skip) is implemented in CouchDB but not in Hyperledger Fabric (FAB-2809 and FAB-5369).
+// Creating an index in CouchDB:
+// curl -i -X POST -H "Content-Type: application/json" -d "{\"index\":{\"fields\":[\"chaincodeid\",\"data.docType\",\"data.id\"]},\"name\":\"indexOwner\",\"ddoc\":\"indexOwnerDoc\",\"type\":\"json\"}" http://localhost:5984/mychannel/_index
 
-// Define the Smart Contract structure
+// SmartContract defines chaincode logic
 type SmartContract struct {
 }
 
-// objectType used for composite keys
+// ObjectType used in CouchDB documents
 const (
-	SegmentObjectType = "segment" // "segment", process, mapID, linkHash -> segment
-	MapObjectType     = "map"     // "map", process, mapID -> nil
+	ObjectTypeSegment = "segment"
+	ObjectTypeMap     = "map"
 )
 
-// linkHash -> (process, mapID) is used to get process and mapID when getting a specific segment
-type SegmentIndex struct {
-	Process string `json:"process"`
-	MapID   string `json:"mapID"`
+// MapDoc is used to store maps in CouchDB
+type MapDoc struct {
+	ObjectType string `json:"docType"`
+	ID         string `json:"id"`
+	Process    string `json:"process"`
+}
+
+// SegmentDoc is used to store segments in CouchDB
+type SegmentDoc struct {
+	ObjectType string     `json:"docType"`
+	ID         string     `json:"id"`
+	Segment    cs.Segment `json:"segment"`
+}
+
+// MapSelector used in MapQuery
+type MapSelector struct {
+	ObjectType string `json:"docType"`
+	Process    string `json:"process,omitempty"`
+}
+
+// MapQuery used in CouchDB rich queries
+type MapQuery struct {
+	Selector MapSelector `json:"selector,omitempty"`
+	Limit    int         `json:"limit,omitempty"`
+	Skip     int         `json:"skip,omitempty"`
+}
+
+func newMapQuery(mapFilter string) (string, error) {
+	filter, err := parseMapFilter(mapFilter)
+	if err != nil {
+		return "", err
+	}
+
+	mapSelector := MapSelector{}
+	mapSelector.ObjectType = ObjectTypeMap
+
+	if filter.Process != "" {
+		mapSelector.Process = filter.Process
+	}
+
+	mapQuery := MapQuery{
+		mapSelector,
+		filter.Pagination.Limit,
+		filter.Pagination.Offset,
+	}
+
+	queryBytes, err := json.Marshal(mapQuery)
+	if err != nil {
+		return "", err
+	}
+
+	return string(queryBytes), nil
+}
+
+// SegmentSelector used in SegmentQuery
+type SegmentSelector struct {
+	ObjectType   string    `json:"docType"`
+	LinkHash     string    `json:"id,omitempty"`
+	PrevLinkHash string    `json:"segment.link.meta.prevLinkHash,omitempty"`
+	Process      string    `json:"segment.link.meta.process,omitempty"`
+	MapIds       *MapIdsIn `json:"segment.link.meta.mapId,omitempty"`
+	Tags         *TagsAll  `json:"segment.link.meta.tags,omitempty"`
+}
+
+// MapIdsIn specifies that segment mapId should be in specified list
+type MapIdsIn struct {
+	MapIds []string `json:"$in,omitempty"`
+}
+
+// TagsAll specifies all tags in specified list should be in segment tags
+type TagsAll struct {
+	Tags []string `json:"$all,omitempty"`
+}
+
+// SegmentQuery used in CouchDB rich queries
+type SegmentQuery struct {
+	Selector SegmentSelector `json:"selector,omitempty"`
+	Limit    int             `json:"limit,omitempty"`
+	Skip     int             `json:"skip,omitempty"`
+}
+
+func newSegmentQuery(segmentFilter string) (string, error) {
+	filter, err := parseSegmentFilter(segmentFilter)
+	if err != nil {
+		return "", err
+	}
+
+	segmentSelector := SegmentSelector{}
+	segmentSelector.ObjectType = ObjectTypeSegment
+
+	if filter.PrevLinkHash != nil {
+		segmentSelector.PrevLinkHash = filter.PrevLinkHash.String()
+	}
+	if filter.Process != "" {
+		segmentSelector.Process = filter.Process
+	}
+	if len(filter.MapIDs) > 0 {
+		segmentSelector.MapIds = &MapIdsIn{filter.MapIDs}
+	} else {
+		segmentSelector.Tags = nil
+	}
+	if len(filter.Tags) > 0 {
+		segmentSelector.Tags = &TagsAll{filter.Tags}
+	} else {
+		segmentSelector.Tags = nil
+	}
+
+	segmentQuery := SegmentQuery{
+		Selector: segmentSelector,
+		Limit:    filter.Pagination.Limit,
+		Skip:     filter.Pagination.Offset,
+	}
+
+	queryBytes, err := json.Marshal(segmentQuery)
+	if err != nil {
+		return "", err
+	}
+
+	return string(queryBytes), nil
 }
 
 // Init method is called when the Smart Contract "pop" is instantiated by the blockchain network
@@ -48,75 +162,39 @@ func (s *SmartContract) Invoke(APIstub shim.ChaincodeStubInterface) sc.Response 
 	function, args := APIstub.GetFunctionAndParameters()
 
 	switch function {
-	case "getMapsAll":
-		return s.getMapsAll(APIstub, args)
-	case "getMapsForProcess":
-		return s.getMapsForProcess(APIstub, args)
-	case "getSegmentsAll":
-		return s.getSegmentsAll(APIstub, args)
-	case "getSegmentsForProcess":
-		return s.getSegmentsForProcess(APIstub, args)
-	case "getSegmentsForMap":
-		return s.getSegmentsForMap(APIstub, args)
-	case "getSegment":
-		return s.getSegment(APIstub, args)
-	case "putSegment":
-		return s.putSegment(APIstub, args)
+	case "GetSegment":
+		return s.GetSegment(APIstub, args)
+	case "FindSegments":
+		return s.FindSegments(APIstub, args)
+	case "GetMapIDs":
+		return s.GetMapIDs(APIstub, args)
+	case "SaveSegment":
+		return s.SaveSegment(APIstub, args)
 	default:
 		return shim.Error("Invalid Smart Contract function name.")
 	}
 }
 
-// Saves map to world state
-func (s *SmartContract) putMap(stub shim.ChaincodeStubInterface, segment *cs.Segment) error {
-	process, mapID := segment.Link.GetProcess(), segment.Link.GetMapID()
-	attrs := []string{process, mapID}
-	ck, err := stub.CreateCompositeKey(MapObjectType, attrs)
+// SaveMap saves map into CouchDB using map document
+func (s *SmartContract) SaveMap(stub shim.ChaincodeStubInterface, segment *cs.Segment) error {
+	mapDoc := MapDoc{
+		ObjectTypeMap,
+		segment.Link.GetMapID(),
+		segment.Link.GetProcess(),
+	}
+	mapDocBytes, err := json.Marshal(mapDoc)
 	if err != nil {
 		return err
 	}
+	if err := stub.PutState(segment.Link.GetMapID(), mapDocBytes); err != nil {
+		return err
+	}
 
-	// Store with composite key "map", process, mapID (query all maps for process)
-	stub.PutState(ck, []byte(nil))
-
-	// Index mapID -> process
-	stub.PutState(mapID, []byte(process))
 	return nil
 }
 
-// Get all mapIDs for a given process
-func (s *SmartContract) getMapsForProcess(stub shim.ChaincodeStubInterface, args []string) sc.Response {
-	process := args[0]
-	resultsIterator, err := stub.GetStateByPartialCompositeKey(MapObjectType, []string{process})
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-	defer resultsIterator.Close()
-
-	resultBytes, err := bytesFromResultsIterator(stub, resultsIterator, getStringFromMapQueryResponse)
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-	return shim.Success(resultBytes)
-}
-
-// Get all mapIDs
-func (s *SmartContract) getMapsAll(stub shim.ChaincodeStubInterface, args []string) sc.Response {
-	resultsIterator, err := stub.GetStateByPartialCompositeKey(MapObjectType, []string{})
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-	defer resultsIterator.Close()
-
-	resultBytes, err := bytesFromResultsIterator(stub, resultsIterator, getStringFromMapQueryResponse)
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-	return shim.Success(resultBytes)
-}
-
-// Save segment to world state
-func (s *SmartContract) putSegment(stub shim.ChaincodeStubInterface, args []string) sc.Response {
+// SaveSegment saves segment into CouchDB using segment document
+func (s *SmartContract) SaveSegment(stub shim.ChaincodeStubInterface, args []string) sc.Response {
 	// Parse segment
 	byteArgs := stub.GetArgs()
 	segment := &cs.Segment{}
@@ -133,119 +211,45 @@ func (s *SmartContract) putSegment(stub shim.ChaincodeStubInterface, args []stri
 	prevLinkHash := segment.Link.GetPrevLinkHashString()
 	if prevLinkHash == "" {
 		// Create map
-		if err := s.putMap(stub, segment); err != nil {
+		if err := s.SaveMap(stub, segment); err != nil {
 			return shim.Error(err.Error())
 		}
 	} else {
 		// Check previous segment exists
-		response := s.getSegment(stub, []string{prevLinkHash})
+		response := s.GetSegment(stub, []string{prevLinkHash})
 		if response.Status == shim.ERROR {
 			return shim.Error("Parent segment doesn't exist")
 		}
 	}
 
 	//  Save segment
-	process, mapID, linkHash := segment.Link.GetProcess(), segment.Link.GetMapID(), segment.GetLinkHashString()
-	attrs := []string{process, mapID, linkHash}
-	ck, err := stub.CreateCompositeKey(SegmentObjectType, attrs)
+	segmentDoc := SegmentDoc{
+		ObjectTypeSegment,
+		segment.GetLinkHashString(),
+		*segment,
+	}
+	segmentDocBytes, err := json.Marshal(segmentDoc)
 	if err != nil {
 		return shim.Error(err.Error())
 	}
-	segmentBytes, err := json.Marshal(segment)
-	if err != nil {
+	if err := stub.PutState(segment.GetLinkHashString(), segmentDocBytes); err != nil {
 		return shim.Error(err.Error())
 	}
-
-	// Store with composite key "segment", process, mapID, linkHash
-	stub.PutState(ck, segmentBytes)
-
-	// Store in segment index linkHash -> (process, mapID)
-	segmentIndex := SegmentIndex{process, mapID}
-	segmentIndexBytes, err := json.Marshal(segmentIndex)
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-	stub.PutState(linkHash, segmentIndexBytes)
 
 	return shim.Success(nil)
 }
 
-// Get all segments
-func (s *SmartContract) getSegmentsAll(stub shim.ChaincodeStubInterface, args []string) sc.Response {
-	resultsIterator, err := stub.GetStateByPartialCompositeKey(SegmentObjectType, []string{})
+// GetSegment gets segment for given linkHash
+func (s *SmartContract) GetSegment(stub shim.ChaincodeStubInterface, args []string) sc.Response {
+	segmentDocBytes, err := stub.GetState(args[0])
 	if err != nil {
 		return shim.Error(err.Error())
 	}
-	defer resultsIterator.Close()
-
-	resultBytes, err := bytesFromResultsIterator(stub, resultsIterator, getStringFromSegmentQueryResponse)
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-	return shim.Success(resultBytes)
-}
-
-// Get all segments for a given process
-func (s *SmartContract) getSegmentsForProcess(stub shim.ChaincodeStubInterface, args []string) sc.Response {
-	process := args[0]
-	resultsIterator, err := stub.GetStateByPartialCompositeKey(SegmentObjectType, []string{process})
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-	defer resultsIterator.Close()
-
-	resultBytes, err := bytesFromResultsIterator(stub, resultsIterator, getStringFromSegmentQueryResponse)
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-	return shim.Success(resultBytes)
-}
-
-// Get all segments for a given mapID
-func (s *SmartContract) getSegmentsForMap(stub shim.ChaincodeStubInterface, args []string) sc.Response {
-	mapId := args[0]
-	processBytes, err := stub.GetState(mapId)
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-
-	resultsIterator, err := stub.GetStateByPartialCompositeKey(SegmentObjectType, []string{string(processBytes), mapId})
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-	defer resultsIterator.Close()
-
-	resultBytes, err := bytesFromResultsIterator(stub, resultsIterator, getStringFromSegmentQueryResponse)
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-	return shim.Success(resultBytes)
-}
-
-// Get segment with corresponding linkHash
-func (s *SmartContract) getSegment(stub shim.ChaincodeStubInterface, args []string) sc.Response {
-	linkHash := args[0]
-	segmentIndexBytes, err := stub.GetState(linkHash)
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-	if segmentIndexBytes == nil {
+	if segmentDocBytes == nil {
 		return shim.Error("Segment does not exist")
 	}
 
-	segmentIndex := &SegmentIndex{}
-	err = json.Unmarshal(segmentIndexBytes, segmentIndex)
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-
-	attrs := []string{segmentIndex.Process, segmentIndex.MapID, linkHash}
-	ck, err := stub.CreateCompositeKey(SegmentObjectType, attrs)
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-
-	segmentBytes, err := stub.GetState(ck)
+	segmentBytes, err := extractSegment(segmentDocBytes)
 	if err != nil {
 		return shim.Error(err.Error())
 	}
@@ -253,32 +257,68 @@ func (s *SmartContract) getSegment(stub shim.ChaincodeStubInterface, args []stri
 	return shim.Success(segmentBytes)
 }
 
+// FindSegments returns segments that match specified segment filter
+func (s *SmartContract) FindSegments(stub shim.ChaincodeStubInterface, args []string) sc.Response {
+	queryString, err := newSegmentQuery(args[0])
+	if err != nil {
+		return shim.Error("Segment filter format incorrect")
+	}
+
+	resultsIterator, err := stub.GetQueryResult(queryString)
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+
+	resultBytes, err := bytesFromResultsIterator(stub, resultsIterator, extractSegment)
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+
+	return shim.Success(resultBytes)
+}
+
+// GetMapIDs returns mapIDs for maps that match specified map filter
+func (s *SmartContract) GetMapIDs(stub shim.ChaincodeStubInterface, args []string) sc.Response {
+	queryString, err := newMapQuery(args[0])
+	if err != nil {
+		return shim.Error("Map filter format incorrect")
+	}
+
+	resultsIterator, err := stub.GetQueryResult(queryString)
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+
+	resultBytes, err := bytesFromResultsIterator(stub, resultsIterator, extractMapID)
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+
+	return shim.Success(resultBytes)
+}
+
 // Saves result from range query or partial composite query into a bytes json array
-func bytesFromResultsIterator(
-	stub shim.ChaincodeStubInterface,
-	resultsIterator shim.StateQueryIteratorInterface,
-	getString func(stub shim.ChaincodeStubInterface, queryResponse *queryresult.KV) (string, error)) ([]byte, error) {
+func bytesFromResultsIterator(stub shim.ChaincodeStubInterface, resultsIterator shim.StateQueryIteratorInterface, extract func([]byte) ([]byte, error)) ([]byte, error) {
 
 	var buffer bytes.Buffer
 	buffer.WriteString("[")
 
-	var resultString string
 	bArrayMemberAlreadyWritten := false
 	for resultsIterator.HasNext() {
+		if bArrayMemberAlreadyWritten == true {
+			buffer.WriteString(",")
+		}
+
 		queryResponse, err := resultsIterator.Next()
 		if err != nil {
 			return nil, err
 		}
 
-		if bArrayMemberAlreadyWritten == true {
-			buffer.WriteString(",")
-		}
-
-		resultString, err = getString(stub, queryResponse)
+		resultBytes, err := extract(queryResponse.Value)
 		if err != nil {
 			return nil, err
 		}
-		buffer.WriteString(resultString)
+		buffer.Write(resultBytes)
 
 		bArrayMemberAlreadyWritten = true
 	}
@@ -287,18 +327,91 @@ func bytesFromResultsIterator(
 	return buffer.Bytes(), nil
 }
 
-// Extracts mapID from queryResponse
-func getStringFromMapQueryResponse(stub shim.ChaincodeStubInterface, queryResponse *queryresult.KV) (string, error) {
-	_, attrs, err := stub.SplitCompositeKey(queryResponse.Key)
-	if err != nil {
-		return "", err
+func extractSegment(segmentDocBytes []byte) ([]byte, error) {
+	segmentDoc := &SegmentDoc{}
+	if err := json.Unmarshal(segmentDocBytes, segmentDoc); err != nil {
+		return nil, err
 	}
-	return "\"" + attrs[1] + "\"", nil
+	segmentBytes, err := json.Marshal(segmentDoc.Segment)
+	if err != nil {
+		return nil, err
+	}
+	return segmentBytes, nil
 }
 
-// Returns segment json as []byte from query response
-func getStringFromSegmentQueryResponse(stub shim.ChaincodeStubInterface, queryResponse *queryresult.KV) (string, error) {
-	return string(queryResponse.Value), nil
+func extractMapID(mapDocBytes []byte) ([]byte, error) {
+	mapDoc := &MapDoc{}
+	if err := json.Unmarshal(mapDocBytes, mapDoc); err != nil {
+		return nil, err
+	}
+	return []byte("\"" + mapDoc.ID + "\""), nil
+}
+
+func parseSegmentFilter(q string) (*store.SegmentFilter, error) {
+	v, err := url.ParseQuery(q)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		mapIDs          = append(v["mapIds[]"], v["mapIds%5B%5D"]...)
+		process         = v.Get("process")
+		prevLinkHashStr = v.Get("prevLinkHash")
+		tags            = append(v["tags[]"], v["tags%5B%5D"]...)
+		prevLinkHash    *types.Bytes32
+	)
+
+	if prevLinkHashStr != "" {
+		prevLinkHash, err = types.NewBytes32FromString(prevLinkHashStr)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	pagination, err := parsePagination(q)
+
+	return &store.SegmentFilter{
+		Pagination:   *pagination,
+		MapIDs:       mapIDs,
+		Process:      process,
+		PrevLinkHash: prevLinkHash,
+		Tags:         tags,
+	}, nil
+}
+
+func parseMapFilter(q string) (*store.MapFilter, error) {
+	v, _ := url.ParseQuery(q)
+	pagination, _ := parsePagination(q)
+
+	return &store.MapFilter{
+		Pagination: *pagination,
+		Process:    v.Get("process"),
+	}, nil
+}
+
+func parsePagination(q string) (*store.Pagination, error) {
+	v, err := url.ParseQuery(q)
+
+	offsetstr := v.Get("offset")
+	offset := 0
+	if offsetstr != "" {
+		if offset, err = strconv.Atoi(offsetstr); err != nil || offset < 0 {
+			return nil, err
+		}
+	}
+
+	limitstr := v.Get("limit")
+	limit := 0
+	if limitstr != "" {
+		if limit, err = strconv.Atoi(limitstr); err != nil || limit < 0 {
+			return nil, err
+		}
+	}
+
+	return &store.Pagination{
+		Offset: offset,
+		Limit:  limit,
+	}, nil
 }
 
 // main function starts up the chaincode in the container during instantiate
