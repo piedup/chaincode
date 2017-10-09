@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 
 	"github.com/stratumn/sdk/store"
@@ -186,11 +187,8 @@ func (s *SmartContract) SaveMap(stub shim.ChaincodeStubInterface, segment *cs.Se
 	if err != nil {
 		return err
 	}
-	if err := stub.PutState(segment.Link.GetMapID(), mapDocBytes); err != nil {
-		return err
-	}
 
-	return nil
+	return stub.PutState(segment.Link.GetMapID(), mapDocBytes)
 }
 
 // SaveSegment saves segment into CouchDB using segment document
@@ -206,6 +204,12 @@ func (s *SmartContract) SaveSegment(stub shim.ChaincodeStubInterface, args []str
 	if err := segment.Validate(); err != nil {
 		return shim.Error(err.Error())
 	}
+	// Set pending evidence
+	segment.SetEvidence(
+		map[string]interface{}{
+			"state":        cs.PendingEvidence,
+			"transactions": map[string]string{"transactionID": stub.GetTxID()},
+		})
 
 	// Check has prevLinkHash if not create map else check prevLinkHash exists
 	prevLinkHash := segment.Link.GetPrevLinkHashString()
@@ -269,7 +273,22 @@ func (s *SmartContract) FindSegments(stub shim.ChaincodeStubInterface, args []st
 		return shim.Error(err.Error())
 	}
 
-	resultBytes, err := bytesFromResultsIterator(stub, resultsIterator, extractSegment)
+	var segments cs.SegmentSlice
+
+	for resultsIterator.HasNext() {
+		queryResponse, err := resultsIterator.Next()
+		if err != nil {
+			return shim.Error(err.Error())
+		}
+		segmentDoc := &SegmentDoc{}
+		if err := json.Unmarshal(queryResponse.Value, segmentDoc); err != nil {
+			return shim.Error(err.Error())
+		}
+		segments = append(segments, &segmentDoc.Segment)
+	}
+	sort.Sort(segments)
+
+	resultBytes, err := json.Marshal(segments)
 	if err != nil {
 		return shim.Error(err.Error())
 	}
@@ -289,11 +308,20 @@ func (s *SmartContract) GetMapIDs(stub shim.ChaincodeStubInterface, args []strin
 		return shim.Error(err.Error())
 	}
 
-	resultBytes, err := bytesFromResultsIterator(stub, resultsIterator, extractMapID)
+	var mapIDs []string
+	for resultsIterator.HasNext() {
+		queryResponse, err := resultsIterator.Next()
+		if err != nil {
+			return shim.Error(err.Error())
+		}
+		mapIDs = append(mapIDs, queryResponse.Key)
+	}
+
+	sort.Strings(mapIDs)
+	resultBytes, err := json.Marshal(mapIDs)
 	if err != nil {
 		return shim.Error(err.Error())
 	}
-
 	return shim.Success(resultBytes)
 }
 
