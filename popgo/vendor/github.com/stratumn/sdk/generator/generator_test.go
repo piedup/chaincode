@@ -15,6 +15,7 @@
 package generator
 
 import (
+	"encoding/json"
 	"io/ioutil"
 	"os"
 	"path"
@@ -393,7 +394,6 @@ func TestGeneratorExec_filenameSubstitution(t *testing.T) {
 	}
 	defer os.RemoveAll(dst)
 
-	//r := strings.NewReader("test\nTest project\nAlex\n2017\nStratumn\n2\nProcess1,Process2\n")
 	r := strings.NewReader("Process1,Process2\nTheTest\n")
 
 	gen, err := NewFromDir("testdata/filename_subst", &Options{Reader: r})
@@ -406,15 +406,33 @@ func TestGeneratorExec_filenameSubstitution(t *testing.T) {
 	}
 
 	if _, err := os.Stat(path.Join(dst, "file-Process1.js")); err != nil {
-		t.Errorf("err: err %s want Error", err.Error())
+		t.Errorf("err: %s", err.Error())
 	}
 
 	if _, err := os.Stat(path.Join(dst, "file-Process2.js")); err != nil {
-		t.Errorf("err: err %s want Error", err.Error())
+		t.Errorf("err: %s", err.Error())
 	}
 
-	if _, err := os.Stat(path.Join(dst, "file-TheTest.json")); err != nil {
-		t.Errorf("err: err %s want Error", err.Error())
+	substitutedJSONFile := path.Join(dst, "file-TheTest.json")
+	if _, err := os.Stat(substitutedJSONFile); err != nil {
+		t.Errorf("err: %s", err.Error())
+	}
+
+	jsonTestFile, err := os.Open(substitutedJSONFile)
+	if err != nil {
+		t.Errorf("err: %s", err.Error())
+	}
+
+	var jsonTestContent struct {
+		Content string `json:"content"`
+	}
+
+	if err := json.NewDecoder(jsonTestFile).Decode(&jsonTestContent); err != nil {
+		t.Errorf("err: %s", err.Error())
+	}
+
+	if jsonTestContent.Content != "TheTest" {
+		t.Errorf("err: want %s got %s", "TheTest", jsonTestContent.Content)
 	}
 }
 

@@ -106,7 +106,9 @@ type SegmentFilter struct {
 	Process string `json:"process"`
 
 	// A previous link hash the segments must have.
-	PrevLinkHash *types.Bytes32 `json:"prevLinkHash"`
+	// nil makes this attribute as optional
+	// empty string is to search Segments without parent
+	PrevLinkHash *string `json:"prevLinkHash"`
 
 	// A slice of tags the segments must all contain.
 	Tags []string `json:"tags"`
@@ -123,6 +125,9 @@ type MapFilter struct {
 // PaginateStrings paginates a list of strings
 func (p *Pagination) PaginateStrings(a []string) []string {
 	l := len(a)
+	if p.Limit == 0 {
+		p.Limit = DefaultLimit
+	}
 	if p.Offset >= l {
 		return []string{}
 	}
@@ -134,6 +139,9 @@ func (p *Pagination) PaginateStrings(a []string) []string {
 // PaginateSegments paginate a list of segments
 func (p *Pagination) PaginateSegments(a cs.SegmentSlice) cs.SegmentSlice {
 	l := len(a)
+	if p.Limit == 0 {
+		p.Limit = DefaultLimit
+	}
 	if p.Offset >= l {
 		return cs.SegmentSlice{}
 	}
@@ -148,4 +156,61 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// Match check if segment matches with filter
+func (filter SegmentFilter) Match(segment *cs.Segment) bool {
+	if segment == nil {
+		return false
+	}
+
+	if filter.PrevLinkHash != nil {
+		prevLinkHash := segment.Link.GetPrevLinkHash()
+		if *filter.PrevLinkHash == "" {
+			if prevLinkHash != nil {
+				return false
+			}
+		} else {
+			filterPrevLinkHash, err := types.NewBytes32FromString(*filter.PrevLinkHash)
+			if err != nil || prevLinkHash == nil || *filterPrevLinkHash != *prevLinkHash {
+				return false
+			}
+		}
+	}
+
+	if filter.Process != "" && filter.Process != segment.Link.GetProcess() {
+		return false
+	}
+
+	if len(filter.MapIDs) > 0 {
+		var match = false
+		mapID := segment.Link.GetMapID()
+		for _, filterMapIDs := range filter.MapIDs {
+			match = match || filterMapIDs == mapID
+		}
+		if !match {
+			return false
+		}
+	}
+
+	if len(filter.Tags) > 0 {
+		tags := segment.Link.GetTagMap()
+		for _, tag := range filter.Tags {
+			if _, ok := tags[tag]; !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Match check if segment matches with filter
+func (filter MapFilter) Match(segment *cs.Segment) bool {
+	if segment == nil {
+		return false
+	}
+	if filter.Process != "" && filter.Process != segment.Link.GetProcess() {
+		return false
+	}
+	return true
 }

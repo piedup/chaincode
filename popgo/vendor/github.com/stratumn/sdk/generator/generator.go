@@ -291,7 +291,12 @@ func (s tmplDescSlice) Less(i, j int) bool {
 	return p1 < p2
 }
 
-func (gen Generator) generateFileListFromSubstitution(name string) ([]string, error) {
+type fileSubstitution struct {
+	input    string // the input value that triggered the substitution
+	filename string // the resulting filename
+}
+
+func (gen Generator) generateFileListFromSubstitution(name string) ([]fileSubstitution, error) {
 	for pattern, subst := range gen.def.FilenameSubsts {
 		if !strings.Contains(name, pattern) {
 			continue
@@ -302,17 +307,17 @@ func (gen Generator) generateFileListFromSubstitution(name string) ([]string, er
 				name, pattern, subst, err.Error())
 		}
 		if str, ok := input.(string); ok {
-			return []string{strings.Replace(name, pattern, str, 1)}, nil
+			return []fileSubstitution{fileSubstitution{str, strings.Replace(name, pattern, str, 1)}}, nil
 		} else if str, ok := input.([]string); ok {
-			names := make([]string, len(str), len(str))
+			names := make([]fileSubstitution, len(str), len(str))
 			for i, s := range str {
-				names[i] = strings.Replace(name, pattern, s, 1)
+				names[i] = fileSubstitution{s, strings.Replace(name, pattern, s, 1)}
 			}
 			return names, nil
 		}
 		return nil, fmt.Errorf("Filename %q contains the pattern %q but input has bad type %#v", name, pattern, input)
 	}
-	return []string{name}, nil
+	return []fileSubstitution{fileSubstitution{"", name}}, nil
 }
 
 func (gen *Generator) generate(dst string) error {
@@ -335,17 +340,17 @@ func (gen *Generator) generate(dst string) error {
 
 	for _, desc := range descs {
 		tmpl := desc.tmpl
-		names, err := gen.generateFileListFromSubstitution(tmpl.Name())
+		fileSubstitutions, err := gen.generateFileListFromSubstitution(tmpl.Name())
 		if err != nil {
 			return err
 		}
-		for _, name := range names {
+		for _, fileSubstitution := range fileSubstitutions {
 			in := filepath.Join(gen.src, FilesDir, tmpl.Name())
 			info, err := os.Stat(in)
 			if err != nil {
 				return err
 			}
-			out := filepath.Join(dst, name)
+			out := filepath.Join(dst, fileSubstitution.filename)
 			if err = os.MkdirAll(filepath.Dir(out), DirPerm); err != nil {
 				return err
 			}
@@ -354,6 +359,7 @@ func (gen *Generator) generate(dst string) error {
 				return err
 			}
 			defer f.Close()
+
 			vars := map[string]interface{}{}
 			for k, v := range gen.opts.TmplVars {
 				vars[k] = v
@@ -361,6 +367,8 @@ func (gen *Generator) generate(dst string) error {
 			for k, v := range gen.def.Variables {
 				vars[k] = v
 			}
+			vars["fileSubstitutionInput"] = fileSubstitution.input
+
 			if err := tmpl.Execute(f, vars); err != nil {
 				return err
 			}

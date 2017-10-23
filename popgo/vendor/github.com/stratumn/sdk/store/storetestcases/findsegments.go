@@ -28,6 +28,8 @@ import (
 	"github.com/stratumn/sdk/testutil"
 )
 
+var emptyPrevLinkHash = ""
+
 func saveSegment(adapter *store.Adapter, segment *cs.Segment, f func(s *cs.Segment)) *cs.Segment {
 	if f != nil {
 		f(segment)
@@ -345,6 +347,33 @@ func (f Factory) TestFindSegmentsMapIDNotFound(t *testing.T) {
 	}
 }
 
+// TestFindSegmentsEmptyPrevLinkHash tests whan happens when you search for an
+// existing previous link hash.
+func (f Factory) TestFindSegmentsEmptyPrevLinkHash(t *testing.T) {
+	a := f.initAdapter(t)
+	defer f.free(a)
+
+	s := saveNewSegment(&a, func(s *cs.Segment) {
+		delete(s.Link.Meta, "prevLinkHash")
+	})
+
+	for i := 0; i < store.DefaultLimit; i++ {
+		saveNewBranch(&a, s, nil)
+	}
+
+	slice, err := a.FindSegments(&store.SegmentFilter{PrevLinkHash: &emptyPrevLinkHash})
+	if err != nil {
+		t.Fatalf("a.FindSegments(): err: %s", err)
+	}
+
+	if got := slice; got == nil {
+		t.Fatal("slice = nil want cs.SegmentSlice")
+	}
+	if got, want := len(slice), 1; got != want {
+		t.Errorf("len(slice) = %d want %d", got, want)
+	}
+}
+
 // TestFindSegmentsPrevLinkHash tests whan happens when you search for an
 // existing previous link hash.
 func (f Factory) TestFindSegmentsPrevLinkHash(t *testing.T) {
@@ -357,11 +386,12 @@ func (f Factory) TestFindSegmentsPrevLinkHash(t *testing.T) {
 		saveNewBranch(&a, s, nil)
 	}
 
+	prevLinkHash := s.GetLinkHash().String()
 	slice, err := a.FindSegments(&store.SegmentFilter{
 		Pagination: store.Pagination{
 			Limit: store.DefaultLimit * 2,
 		},
-		PrevLinkHash: s.GetLinkHash(),
+		PrevLinkHash: &prevLinkHash,
 	})
 	if err != nil {
 		t.Fatalf("a.FindSegments(): err: %s", err)
@@ -402,11 +432,12 @@ func (f Factory) TestFindSegmentsPrevLinkHashTags(t *testing.T) {
 		})
 	}
 
+	prevLinkHash := s1.GetLinkHash().String()
 	slice, err := a.FindSegments(&store.SegmentFilter{
 		Pagination: store.Pagination{
 			Limit: store.DefaultLimit * 3,
 		},
-		PrevLinkHash: s1.GetLinkHash(),
+		PrevLinkHash: &prevLinkHash,
 		Tags:         []string{tag1},
 	})
 	if err != nil {
@@ -443,11 +474,12 @@ func (f Factory) TestFindSegmentsPrevLinkHashGoodMapID(t *testing.T) {
 		})
 	}
 
+	prevLinkHash := s1.GetLinkHash().String()
 	slice, err := a.FindSegments(&store.SegmentFilter{
 		Pagination: store.Pagination{
 			Limit: store.DefaultLimit * 2,
 		},
-		PrevLinkHash: s1.GetLinkHash(),
+		PrevLinkHash: &prevLinkHash,
 		MapIDs:       []string{mapID1, mapID2},
 	})
 	if err != nil {
@@ -484,11 +516,12 @@ func (f Factory) TestFindSegmentsPrevLinkHashBadMapID(t *testing.T) {
 		})
 	}
 
+	prevLinkHash := s1.GetLinkHash().String()
 	slice, err := a.FindSegments(&store.SegmentFilter{
 		Pagination: store.Pagination{
 			Limit: store.DefaultLimit * 2,
 		},
-		PrevLinkHash: s1.GetLinkHash(),
+		PrevLinkHash: &prevLinkHash,
 		MapIDs:       []string{mapID2},
 	})
 	if err != nil {
@@ -509,11 +542,12 @@ func (f Factory) TestFindSegmentsPrevLinkHashNotFound(t *testing.T) {
 	a := f.initAdapter(t)
 	defer f.free(a)
 
+	notFoundPrevLinkHash := testutil.RandomHash().String()
 	slice, err := a.FindSegments(&store.SegmentFilter{
 		Pagination: store.Pagination{
 			Limit: store.DefaultLimit,
 		},
-		PrevLinkHash: testutil.RandomHash(),
+		PrevLinkHash: &notFoundPrevLinkHash,
 	})
 	if err != nil {
 		t.Fatalf("a.FindSegments(): err: %s", err)
