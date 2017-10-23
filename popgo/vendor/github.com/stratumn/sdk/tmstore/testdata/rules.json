@@ -1,0 +1,15 @@
+{
+  "testProcess": [
+    {
+      "type": "init",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "string": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}

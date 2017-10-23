@@ -1,0 +1,10 @@
+*.DS_Store
+*.out
+*.swp
+dist
+coverage.txt
+coverhtml.txt
+debug
+debug.test
+segments
+vendor
